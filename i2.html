@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UniTravel - Campus Commute App</title>
+   
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
+    <link rel="stylesheet" href="style.css">
+    
+
+   
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDYEKvKR51_xA8cgChVKklry94ieK4ZBdc&callback=initBuddyMap" async defer></script>
+</head>
+<script>
+    // Validation Helper
+    function isValidIndianMobile(phone) {
+        if (!phone) return false;
+        const cleaned = phone.replace(/\D/g, '');
+        return /^[6789]\d{9}$/.test(cleaned);
+    }
+    // Alert Logic
+    let confirmCallback = null;
+    function showAppConfirm(message, callback) {
+        document.getElementById('appConfirmMessage').textContent = message;
+        document.getElementById('appConfirm').style.display = 'flex';
+        confirmCallback = callback;
+    }
+    function closeAppConfirm(result) {
+        document.getElementById('appConfirm').style.display = 'none';
+        if (confirmCallback) { confirmCallback(result); confirmCallback = null; }
+    }
+    function showAppAlert(message) {
+        document.getElementById('appAlertMessage').textContent = message;
+        document.getElementById('appAlert').style.display = 'flex';
+    }
+    function closeAppAlert() {
+        document.getElementById('appAlert').style.display = 'none';
+    }
+    // Refill Logic
+    function refillForcedNameFields() {
+        const currentUser = firebase.auth().currentUser;
+        if (!currentUser || !currentUser.displayName) return;
+        const nameFields = document.querySelectorAll('#rideName, #trainName, #profileName');
+        nameFields.forEach(field => {
+            if (field) field.value = currentUser.displayName;
+        });
+    }
+</script>
+<body>
+    <div class="container">
+        <div id="loginPage" class="login-container">
+            <div class="login-card">
+                <div style="font-size: 40px; margin-bottom: 10px;">🚀</div>
+                <h2>UniTravel</h2>
+                <p style="color: var(--text-muted); margin-bottom: 24px;">Campus Commute. Shared & Smart.</p>
+                <button class="btn btn-google" onclick="loginWithGoogle()">Sign in with Google</button>
+            </div>
+        </div>
+        <div class="app-wrapper" id="appWrapper">
+            <header>
+                <h1>🚀 UniTravel</h1>
+                <div class="auth-section">
+                    <div class="user-greeting" id="userGreeting"></div>
+                    <button class="btn btn-logout" onclick="logout()">Logout</button>
+                </div>
+            </header>
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="rides">🚗 Rides</button>
+                <button class="tab-btn" data-tab="trains">🚂 Trains</button>
+                <button class="tab-btn" data-tab="guide">📖 Guide</button>
+                <button class="tab-btn" data-tab="profile">👤 Profile</button>
+                <button class="tab-btn" data-tab="info">ℹ️ Info & Help</button>
+            </div>
+            <div id="rides" class="tab-content active">
+                <div class="card">
+                    <h2>🔍 Find Nearby Rides</h2>
+                    <div id="searchFormContainer">
+                        <div class="search-grid">
+                            <div class="form-group-relative">
+                                <label>From</label>
+                                <input type="text" id="searchFrom" placeholder="Start location..." autocomplete="off">
+                                <div class="location-list" id="fromLocationList"></div>
+                            </div>
+                            <div class="form-group-relative">
+                                <label>To</label>
+                                <input type="text" id="searchTo" placeholder="Destination..." autocomplete="off">
+                                <div class="location-list" id="toLocationList"></div>
+                            </div>
+                            <div class="form-group-relative">
+                                <label>Date</label>
+                                <input type="date" id="searchDate">
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 10px; margin-top: 15px;">
+                            <button class="btn btn-primary" onclick="searchRidesByProximity()">Search Rides</button>
+                            <button class="btn btn-secondary" onclick="clearSearch()">Clear</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="grid" id="searchResultsList" style="margin-bottom: 30px;"></div>
+                <div class="card">
+                    <h2>➕ Post a New Ride</h2>
+                    <form id="rideForm">
+                        <div class="search-grid">
+                            <div class="form-group">
+                                <label>Name</label>
+                                <input type="text" id="rideName" readonly>
+                            </div>
+                            <div class="form-group">
+                                <label>Phone</label>
+                                <input type="tel" id="ridePhone" placeholder="10-digit number" required pattern="[6789][0-9]{9}">
+                            </div>
+                        </div>
+                        <div class="search-grid">
+                            <div class="form-group-relative">
+                                <label>From</label>
+                                <input type="text" id="rideFrom" placeholder="Start..." required autocomplete="off">
+                                <div class="location-list" id="rideFromLocationList"></div>
+                            </div>
+                            <div class="form-group-relative">
+                                <label>To</label>
+                                <input type="text" id="rideTo" placeholder="Destination..." required autocomplete="off">
+                                <div class="location-list" id="rideToLocationList"></div>
+                            </div>
+                        </div>
+                        <div class="search-grid">
+                            <div class="form-group">
+                                <label>Date & Time</label>
+                                <input type="datetime-local" id="rideDeparture" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Seats</label>
+                                <input type="number" id="rideSeats" min="1" max="5" value="1" required>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Notes</label>
+                            <textarea id="rideNotes" placeholder="Cost, vehicle type (Auto/Cab), meeting point..."></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-primary" style="width: 100%">Post Ride</button>
+                    </form>
+                </div>
+                <h2 style="margin-bottom: 15px; display: flex; align-items: center; justify-content: space-between;">
+                    Latest Rides
+                </h2>
+               
+                <div class="filter-bar">
+                    <input type="text" placeholder="Filter by location, seats..." id="filter-input-rides">
+                    <select class="filter-select" id="filter-select-rides">
+                        <option>Newest First</option>
+                        <option>Time Ascending</option>
+                        <option>Time Descending</option>
+                        <option>Seats High → Low</option>
+                    </select>
+                </div>
+                <div class="grid" id="ridesList"></div>
+            </div>
+            <div id="trains" class="tab-content">
+                <div class="card">
+                    <h2>🚂 Find Co-Travelers</h2>
+                    <div class="search-grid">
+                        <div class="form-group">
+                            <label>Train Number / Name</label>
+                            <input type="text" id="trainSearchInput" placeholder="e.g., 16301, Venad Express...">
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 10px;">
+                        <button class="btn btn-primary" onclick="searchTrainTravelers()">Search</button>
+                        <button class="btn btn-secondary" onclick="clearTrainSearch()">Show All</button>
+                    </div>
+                </div>
+                <div class="card">
+                    <h2>➕ Post Journey</h2>
+                    <form id="trainForm">
+                        <div class="form-group">
+                            <label>Name</label>
+                            <input type="text" id="trainName" readonly>
+                        </div>
+                        <div class="search-grid">
+                            <div class="form-group">
+                                <label>Phone</label>
+                                <input type="tel" id="trainPhone" placeholder="10-digit number" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Train Name/No</label>
+                                <input type="text" id="trainNumberName" placeholder="e.g. 16301" required>
+                            </div>
+                        </div>
+                        <div class="search-grid">
+                            <div class="form-group-relative">
+                                <label>From</label>
+                                <input type="text" id="trainFrom" required autocomplete="off">
+                                <div class="location-list" id="trainFromLocationList"></div>
+                            </div>
+                            <div class="form-group-relative">
+                                <label>To</label>
+                                <input type="text" id="trainTo" required autocomplete="off">
+                                <div class="location-list" id="trainToLocationList"></div>
+                            </div>
+                        </div>
+                        <div class="search-grid">
+                            <div class="form-group">
+                                <label>Departure</label>
+                                <input type="datetime-local" id="trainDeparture" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Coach (Optional)</label>
+                                <input type="text" id="trainCoach" placeholder="e.g. S4, B1">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Notes</label>
+                            <textarea id="trainNotes" placeholder="Seat preference, PNR status info..."></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-primary" style="width: 100%">Post Journey</button>
+                    </form>
+                </div>
+                <h2>Upcoming Journeys</h2>
+                <div class="grid" id="trainsList"></div>
+            </div>
+            <div id="guide" class="tab-content">
+                <div class="card">
+                    <h2>🎓 Campus Guide</h2>
+                    <p style="color: var(--text-muted); margin-bottom: 20px;">Essential travel routes for newcomers.</p>
+                    <div style="background: var(--bg-body); padding: 15px; border-radius: var(--radius-md); margin-bottom: 15px; border-left: 4px solid var(--primary);">
+                        <strong>📍 Route 1: From Kottayam Railway Station</strong><br>
+                        <span style="font-size: 13px; color: var(--text-muted)">Station → Bus Stand → Bus to Pala → Valavoor → IIIT</span>
+                        <div style="margin-top: 5px; font-size: 13px;">⏱ 60 min | 💰 ₹90 (Bus)</div>
+                    </div>
+                    <div style="background: var(--bg-body); padding: 15px; border-radius: var(--radius-md); margin-bottom: 15px; border-left: 4px solid var(--primary);">
+                        <strong>📍 Route 2: From Cochin Airport (COK)</strong><br>
+                        <span style="font-size: 13px; color: var(--text-muted)">Airport → Angamaly → Kottayam → Pala</span>
+                        <div style="margin-top: 5px; font-size: 13px;">⏱ 3 Hrs | 💰 ₹500+</div>
+                    </div>
+                    <h3 style="margin-top: 30px; font-size: 16px;">Campus Location</h3>
+                    <div style="height: 300px; width: 100%; border-radius: var(--radius-md); overflow: hidden; margin-top: 10px;">
+                        <div id="buddy-map" style="height: 100%; width: 100%;"></div>
+                    </div>
+                </div>
+            </div>
+            <div id="profile" class="tab-content">
+                <div class="card">
+                    <h2>👤 My Profile</h2>
+                    <form id="profileForm">
+                        <div class="form-group">
+                            <label>Name</label>
+                            <input type="text" id="profileName" readonly>
+                        </div>
+                        <div class="form-group">
+                            <label>Phone</label>
+                            <input type="tel" id="profilePhone" placeholder="10-digit number" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Hostel / Room</label>
+                            <input type="text" id="profileHostel" placeholder="e.g. Kadamba, 304">
+                        </div>
+                        <div class="form-group">
+                            <label>Bio</label>
+                            <textarea id="profileBio" placeholder="Short bio about your travel preferences..."></textarea>
+                        </div>
+                        <button type="submit" class="btn btn-primary" style="width: 100%">Save Profile</button>
+                    </form>
+                    <div id="savedProfile" style="margin-top: 20px; display: none;">
+                        <div style="background: #FFFDE7; border: 1px solid #FFC107; color: #E65100; padding: 15px; border-radius: var(--radius-md);">
+                            <strong>✅ Profile Saved Successfully!</strong>
+                            <div id="profileDisplay" style="margin-top: 10px; font-size: 14px;"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="info" class="tab-content">
+    
+    <div class="card">
+        <h2>📞 Important Contacts</h2>
+        <div class="search-grid">
+            <div style="background: var(--bg-input); padding: 15px; border-radius: var(--radius-md); border-left: 4px solid var(--danger);">
+                <h3 style="margin: 0 0 10px 0; font-size: 15px; color: var(--text-main);">🏥 Medical & Emergency</h3>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <a href="tel:108" class="btn btn-secondary" style="justify-content: space-between; text-decoration: none;">
+                        <span>🚑 Ambulance</span> <strong>108</strong>
+                    </a>
+                    <a href="tel:100" class="btn btn-secondary" style="justify-content: space-between; text-decoration: none;">
+                        <span>👮 Police</span> <strong>100</strong>
+                    </a>
+                    <a href="tel:04822212345" class="btn btn-secondary" style="justify-content: space-between; text-decoration: none;">
+                        <span>🏥 Pala Govt. Hospital</span> <strong>Call</strong>
+                    </a>
+                </div>
+            </div>
+
+            <div style="background: var(--bg-input); padding: 15px; border-radius: var(--radius-md); border-left: 4px solid var(--primary);">
+                <h3 style="margin: 0 0 10px 0; font-size: 15px; color: var(--text-main);">🎓 Campus Numbers</h3>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <a href="#" class="btn btn-secondary" style="justify-content: space-between; text-decoration: none;">
+                        <span>🛡️ Main Gate Security</span> <strong>Call</strong>
+                    </a>
+                    <a href="#" class="btn btn-secondary" style="justify-content: space-between; text-decoration: none;">
+                        <span>🏢 Admin Office</span> <strong>Call</strong>
+                    </a>
+                    <a href="#" class="btn btn-secondary" style="justify-content: space-between; text-decoration: none;">
+                        <span>🏠 Hostel Warden</span> <strong>Call</strong>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>🔗 Quick Links</h2>
+        <p style="color: var(--text-muted); font-size: 13px; margin-bottom: 15px;">Official portals for travel and academics.</p>
+        
+        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px;">
+            <a href="https://www.iiitkottayam.ac.in/" target="_blank" class="btn btn-secondary" style="flex-direction: column; padding: 15px; text-decoration: none;">
+                <span style="font-size: 24px; margin-bottom: 5px;">🏛️</span>
+                <span>IIITK Website</span>
+            </a>
+            <a href="https://www.irctc.co.in/" target="_blank" class="btn btn-secondary" style="flex-direction: column; padding: 15px; text-decoration: none;">
+                <span style="font-size: 24px; margin-bottom: 5px;">🚆</span>
+                <span>IRCTC Booking</span>
+            </a>
+            <a href="https://www.keralartc.com/" target="_blank" class="btn btn-secondary" style="flex-direction: column; padding: 15px; text-decoration: none;">
+                <span style="font-size: 24px; margin-bottom: 5px;">🚌</span>
+                <span>KSRTC Bus</span>
+            </a>
+            <a href="https://kochimetro.org/" target="_blank" class="btn btn-secondary" style="flex-direction: column; padding: 15px; text-decoration: none;">
+                <span style="font-size: 24px; margin-bottom: 5px;">🚇</span>
+                <span>Kochi Metro</span>
+            </a>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>📍 Official Address</h2>
+        <div style="background: var(--primary-light); padding: 15px; border-radius: var(--radius-md); color: var(--primary-dark); font-size: 14px; line-height: 1.6;">
+            <strong>Indian Institute of Information Technology Kottayam</strong><br>
+            Valavoor P.O, Pala,<br>
+            Kottayam, Kerala - 686635<br>
+            India
+        </div>
+        <div style="margin-top: 15px; display: flex; gap: 10px;">
+            <button class="btn btn-primary" onclick="window.open('https://maps.google.com/?q=IIIT+Kottayam', '_blank')" style="flex: 1;">🗺️ Open in Maps</button>
+            <button class="btn btn-secondary" onclick="navigator.clipboard.writeText('Indian Institute of Information Technology Kottayam, Valavoor P.O, Pala, Kottayam - 686635'); showAppAlert('Address Copied! ✅')" style="flex: 1;">📋 Copy Text</button>
+        </div>
+    </div>
+
+</div>
+        </div>
+    </div>
+    <div id="appAlert" class="app-alert-overlay">
+        <div class="app-alert-box">
+            <h3>📢 Notice</h3>
+            <p id="appAlertMessage"></p>
+            <button onclick="closeAppAlert()" class="btn btn-primary" style="width: 100%">OK</button>
+        </div>
+    </div>
+    <div id="appConfirm" class="app-alert-overlay">
+        <div class="app-alert-box">
+            <h3>🤔 Confirm</h3>
+            <p id="appConfirmMessage"></p>
+            <div style="display:flex; gap:10px; justify-content:center;">
+                <button class="btn btn-secondary" onclick="closeAppConfirm(false)">Cancel</button>
+                <button class="btn btn-danger" onclick="closeAppConfirm(true)">Confirm</button>
+            </div>
+        </div>
+    </div>
+    <script>
+        // FIREBASE CONFIG
+       const firebaseConfig = {
+    apiKey: "AIzaSyDMdqJz-UaaRlYhhQ27iEWrOJ3tJ5LRR1A",
+    authDomain: "uniride-8370d.firebaseapp.com",
+    projectId: "uniride-8370d",
+    storageBucket: "uniride-8370d.firebasestorage.app",
+    messagingSenderId: "881054278082",
+    appId: "1:881054278082:web:b72c3ec0050cf18aaa365b"
+  };
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        // ------------------ LOGIC START ------------------
+        // AUTH
+        auth.onAuthStateChanged(user => {
+            if (user) {
+                document.getElementById('loginPage').style.display = 'none';
+                document.getElementById('appWrapper').style.display = 'block';
+                document.getElementById('userGreeting').textContent = `Hi, ${user.displayName.split(' ')[0]}`;
+               
+                // Force Name Refill
+                refillForcedNameFields();
+                loadAllData();
+            } else {
+                document.getElementById('loginPage').style.display = 'flex';
+                document.getElementById('appWrapper').style.display = 'none';
+            }
+        });
+        function loginWithGoogle() {
+            const provider = new firebase.auth.GoogleAuthProvider();
+            auth.signInWithPopup(provider).then(result => {
+                const email = result.user.email || '';
+                if (!email.endsWith('@iiitkottayam.ac.in')) {
+                    showAppAlert('❌ Please use your IIIT Kottayam email ID.');
+                    auth.signOut();
+                } else {
+                    showAppAlert(`✅ Welcome ${result.user.displayName}!`);
+                }
+            }).catch(err => showAppAlert("Login Error: " + err.message));
+        }
+        function logout() { auth.signOut(); }
+        // TABS
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const tabName = this.getAttribute('data-tab');
+                document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                document.getElementById(tabName).classList.add('active');
+                this.classList.add('active');
+            });
+        });
+        // --- RIDES ---
+        let rides = [];
+        document.getElementById('rideForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const user = auth.currentUser;
+            if(!user) return;
+            const phone = document.getElementById('ridePhone').value;
+            if(!isValidIndianMobile(phone)) { showAppAlert("Invalid Phone Number"); return; }
+           
+            const departureInput = document.getElementById('rideDeparture').value;
+            if(new Date(departureInput) <= new Date()) { showAppAlert("Time must be in future"); return; }
+           
+            const selectedDate = new Date(departureInput);
+            db.collection('rides').add({
+                userId: user.uid,
+                name: user.displayName,
+                phone: phone,
+                from: document.getElementById('rideFrom').value,
+                to: document.getElementById('rideTo').value,
+                departure: departureInput,
+                date: selectedDate.toISOString().split('T')[0],
+                time: selectedDate.toTimeString().slice(0,5),
+                seats: document.getElementById('rideSeats').value,
+                notes: document.getElementById('rideNotes').value,
+                timestamp: firebase.firestore.FieldValue.serverTimestamp()
+            }).then(() => {
+                document.getElementById('rideForm').reset();
+                refillForcedNameFields();
+                showAppAlert("✅ Ride Posted!");
+            });
+        });
+        function loadRides() {
+            db.collection('rides').orderBy('timestamp', 'desc').limit(50).onSnapshot(snap => {
+                rides = [];
+                snap.forEach(doc => rides.push({id: doc.id, ...doc.data()}));
+                renderRides(rides);
+            });
+        }
+        function renderRides(data) {
+            const container = document.getElementById('ridesList');
+            const now = new Date();
+            const filtered = data.filter(r => new Date(r.departure) > now);
+           
+            if(filtered.length === 0) {
+                container.innerHTML = '<div class="empty-state">No active rides found.</div>';
+                return;
+            }
+            const currentUser = auth.currentUser;
+           
+            container.innerHTML = filtered.map(ride => {
+                const isMine = currentUser && ride.userId === currentUser.uid;
+                return `
+                <div class="post-card">
+                    <h3 class="post-title">${ride.from} → ${ride.to}</h3>
+                    <div class="post-meta">
+                        <span class="badge badge-info">📅 ${ride.date}</span>
+                        <span class="badge badge-info">⏰ ${ride.time}</span>
+                        <span class="badge badge-success">💺 ${ride.seats} seats</span>
+                    </div>
+                    <div class="post-description">${ride.notes || 'No extra notes'}</div>
+                    <div class="post-user">
+                        <div class="avatar">${ride.name.charAt(0)}</div>
+                        <div class="user-info">
+                            <p class="user-name">${ride.name}</p>
+                            <p class="user-phone">${isMine ? 'You' : ''}</p>
+                        </div>
+                        ${isMine ?
+                            `<button class="btn btn-danger" style="padding:6px 12px; font-size:12px;" onclick="deleteRide('${ride.id}')">Delete</button>` :
+                            `<button class="btn btn-contact" onclick="contactUser('${ride.phone}', '${ride.name}')">Connect</button>`
+                        }
+                    </div>
+                </div>`;
+            }).join('');
+        }
+        function deleteRide(id) {
+            showAppConfirm("Delete this ride?", (yes) => {
+                if(yes) db.collection('rides').doc(id).delete();
+            });
+        }
+        // --- TRAINS ---
+        let trains = [];
+        document.getElementById('trainForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const user = auth.currentUser;
+            if(!isValidIndianMobile(document.getElementById('trainPhone').value)) { showAppAlert("Invalid Phone"); return; }
+           
+            db.collection('trains').add({
+                userId: user.uid,
+                name: user.displayName,
+                phone: document.getElementById('trainPhone').value,
+                trainIdentifier: document.getElementById('trainNumberName').value,
+                from: document.getElementById('trainFrom').value,
+                to: document.getElementById('trainTo').value,
+                departure: document.getElementById('trainDeparture').value,
+                coach: document.getElementById('trainCoach').value,
+                notes: document.getElementById('trainNotes').value,
+                timestamp: firebase.firestore.FieldValue.serverTimestamp()
+            }).then(() => {
+                document.getElementById('trainForm').reset();
+                refillForcedNameFields();
+                showAppAlert("✅ Journey Posted!");
+            });
+        });
+        function loadTrains() {
+            db.collection('trains').orderBy('timestamp', 'desc').limit(50).onSnapshot(snap => {
+                trains = [];
+                snap.forEach(doc => trains.push({id: doc.id, ...doc.data()}));
+                renderTrains(trains);
+            });
+        }
+        function renderTrains(data) {
+            const container = document.getElementById('trainsList');
+            const now = new Date();
+            const filtered = data.filter(t => new Date(t.departure) > now);
+           
+            if(filtered.length === 0) { container.innerHTML = '<div class="empty-state">No upcoming train journeys.</div>'; return; }
+           
+            const currentUser = auth.currentUser;
+            container.innerHTML = filtered.map(t => {
+                const dateObj = new Date(t.departure);
+                const isMine = currentUser && t.userId === currentUser.uid;
+               
+                return `
+                <div class="post-card">
+                    <h3 class="post-title">🚂 ${t.trainIdentifier}</h3>
+                    <div class="post-meta">
+                         <span class="badge badge-info">${t.from} ➝ ${t.to}</span>
+                         <span class="badge badge-success">${dateObj.toLocaleDateString()} ${dateObj.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+                    </div>
+                    <div class="post-description">
+                        ${t.coach ? `<strong>Coach: ${t.coach}</strong><br>` : ''}
+                        ${t.notes || ''}
+                    </div>
+                    <div class="post-user">
+                        <div class="avatar">${t.name.charAt(0)}</div>
+                        <div class="user-info">
+                            <p class="user-name">${t.name}</p>
+                        </div>
+                        ${isMine ?
+                            `<button class="btn btn-danger" style="padding:6px 12px; font-size:12px;" onclick="deleteTrain('${t.id}')">Delete</button>` :
+                            `<button class="btn btn-contact" onclick="contactUser('${t.phone}', '${t.name}')">Connect</button>`
+                        }
+                    </div>
+                </div>`;
+            }).join('');
+        }
+        function deleteTrain(id) {
+            showAppConfirm("Delete train journey?", (yes) => { if(yes) db.collection('trains').doc(id).delete(); });
+        }
+       
+        function searchTrainTravelers() {
+            const term = document.getElementById('trainSearchInput').value.toLowerCase();
+            const filtered = trains.filter(t => t.trainIdentifier.toLowerCase().includes(term));
+            renderTrains(filtered);
+        }
+        function clearTrainSearch() {
+            document.getElementById('trainSearchInput').value = '';
+            renderTrains(trains);
+        }
+        // --- PROFILE ---
+        document.getElementById('profileForm').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const userProfile = {
+                name: document.getElementById('profileName').value,
+                phone: document.getElementById('profilePhone').value,
+                hostel: document.getElementById('profileHostel').value,
+                bio: document.getElementById('profileBio').value
+            };
+            document.getElementById('profileDisplay').innerHTML = `
+                Phone: ${userProfile.phone}<br>Hostel: ${userProfile.hostel}<br>Bio: ${userProfile.bio}
+            `;
+            document.getElementById('savedProfile').style.display = 'block';
+        });
+        // --- HELPERS ---
+        function loadAllData() {
+            loadRides();
+            loadTrains();
+            // Call autocomplete setups here if JS files exist
+        }
+        function contactUser(phone, name) {
+            if(!phone) { showAppAlert("No phone number"); return; }
+            let p = phone.replace(/\D/g, '');
+            if(p.length === 10) p = "91" + p;
+            const msg = encodeURIComponent(`Hi ${name}, I saw your post on Travel Buddy.`);
+            window.open(`https://wa.me/${p}?text=${msg}`, '_blank');
+        }
+        function initBuddyMap() {
+            const iiitKottayam = { lat: 9.754833, lng: 76.650000 };
+            const map = new google.maps.Map(document.getElementById("buddy-map"), {
+                zoom: 16,
+                center: iiitKottayam,
+                mapTypeControl: false,
+                streetViewControl: false,
+                fullscreenControl: false,
+                styles: [{ featureType: "poi", elementType: "labels", stylers: [{ visibility: "off" }] }]
+            });
+            new google.maps.Marker({ position: iiitKottayam, map: map, title: "IIIT Kottayam" });
+        }
+    </script>
+   
+    <!-- <script src="location.js"></script>
+    <script src="AutoComplete.js"></script> -->
+    <script src="filters.js"></script>
+    <script>
+        // Re-attach setupLocationAutocomplete if the function exists from external files
+        function safeAutocomplete(id, listId) {
+            if (typeof setupLocationAutocomplete === 'function') {
+                setupLocationAutocomplete(id, listId);
+            }
+        }
+        // These need to run after DOM load
+        document.addEventListener('DOMContentLoaded', () => {
+             safeAutocomplete('searchFrom', 'fromLocationList');
+             safeAutocomplete('searchTo', 'toLocationList');
+             safeAutocomplete('rideFrom', 'rideFromLocationList');
+             safeAutocomplete('rideTo', 'rideToLocationList');
+             safeAutocomplete('trainFrom', 'trainFromLocationList');
+             safeAutocomplete('trainTo', 'trainToLocationList');
+        });
+       
+        // Setup Filters if classes exist
+        if(typeof RideFilter !== 'undefined') {
+            const rf = new RideFilter(document.getElementById("filter-input-rides"), document.getElementById("filter-select-rides"));
+            document.getElementById("filter-input-rides").addEventListener("input", () => renderRides(rf.apply(rides)));
+            document.getElementById("filter-select-rides").addEventListener("change", () => renderRides(rf.apply(rides)));
+        }
+    </script>
+</body>
+</html>
